@@ -1,0 +1,19 @@
+{
+  "name": "localbiz-marketplace",
+  "version": "1.0.0",
+  "description": "LocalBiz - AI-Powered Digital Marketplace for Local Entrepreneurs (Prototype)",
+  "scripts": {
+    "start": "node backend/server.js",
+    "server": "node backend/server.js",
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "localbiz",
+    "marketplace",
+    "artisan",
+    "ecommerce"
+  ],
+  "author": "Group 6 (Shoaib Khan & Aditi Khandge)",
+  "license": "ISC"
+}
