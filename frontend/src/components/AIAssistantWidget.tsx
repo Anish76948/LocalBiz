@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, X, Send, Bot, User, CheckCircle2, Package, ArrowRight, RefreshCw } from 'lucide-react';
+import { Sparkles, X, Send, CheckCircle2, Package, RefreshCw } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -15,6 +15,55 @@ interface AIAssistantWidgetProps {
   onOpenOrders?: () => void;
 }
 
+// Helper to format assistant messages with rich typography (bold, bullet points, numbers)
+function renderFormattedText(text: string, isUser: boolean) {
+  const lines = text.split('\n');
+
+  return (
+    <div className="space-y-1.5">
+      {lines.map((line, lIdx) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return <div key={lIdx} className="h-1" />;
+        }
+
+        const isBullet = trimmed.startsWith('•') || trimmed.startsWith('- ') || /^\d+\./.test(trimmed);
+        const cleanContent = isBullet ? trimmed.replace(/^[•\-\d+\.]\s*/, '') : trimmed;
+
+        // Parse **bold** parts
+        const parts = cleanContent.split(/(\*\*.*?\*\*)/g).map((part, pIdx) => {
+          if (part.startsWith('**') && part.endsWith('**')) {
+            return (
+              <strong
+                key={pIdx}
+                className={isUser ? 'font-bold text-white' : 'font-bold text-slate-900'}
+              >
+                {part.slice(2, -2)}
+              </strong>
+            );
+          }
+          return part;
+        });
+
+        if (isBullet) {
+          return (
+            <div key={lIdx} className="flex items-start space-x-2 pl-1">
+              <span className={`font-bold mt-0.5 shrink-0 ${isUser ? 'text-white' : 'text-emerald-600'}`}>•</span>
+              <span className="leading-relaxed flex-1">{parts}</span>
+            </div>
+          );
+        }
+
+        return (
+          <p key={lIdx} className="leading-relaxed">
+            {parts}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
   onActionSuccess,
   onOpenOrders,
@@ -26,7 +75,7 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
     {
       id: 'welcome',
       sender: 'assistant',
-      text: "Namaste! I am **Bazaar Buddy**, your autonomous AI Assistant & Business Coach powered by Space Bunny.\n\nI can **place orders**, **track shipments**, **mark orders as shipped**, query **real-time sales analytics**, or explain platform payment and pricing formulas. What would you like to do?",
+      text: "Namaste! I am **Bazaar Buddy**, your autonomous AI Assistant & Business Coach for LocalBiz.\n\nI can **place orders**, **track shipments**, **mark orders as shipped**, query **real-time sales analytics**, or explain platform payment and pricing formulas. What would you like to do?",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -40,7 +89,7 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
   }, [messages, isOpen]);
 
   const quickPrompts = [
-    '🛍️ Order Aaji mango pickle for Shoaib at Bandra',
+    '🛍️ Order Aaji mango pickle for Anish at Bandra',
     '📦 Track order LB-7482',
     '🚚 Mark order LB-7482 as Shipped',
     '💡 How should I price my pottery?',
@@ -96,7 +145,7 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
         {
           id: `err-${Date.now()}`,
           sender: 'assistant',
-          text: '⚠️ Unable to connect to AI microservice on port 8000. Please ensure `main.py` is running.',
+          text: '⚠️ Unable to process request. Please check that the server is operational.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -107,29 +156,24 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
 
   return (
     <>
-      {/* Floating Trigger Button */}
+      {/* Floating Launcher Button */}
       {!isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center space-x-3">
-          <div className="hidden sm:flex items-center space-x-2 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-full shadow-lg border border-emerald-100 text-xs font-semibold text-slate-800 animate-in fade-in slide-in-from-right-4 duration-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span>AI Co-pilot Ready</span>
-          </div>
-
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40">
           <button
             onClick={() => setIsOpen(true)}
-            className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xl glow-emerald transition-all transform hover:scale-105 active:scale-95 cursor-pointer relative"
+            className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xl glow-emerald transition-all transform hover:scale-105 active:scale-95 cursor-pointer relative"
             aria-label="Open AI Assistant"
             title="Chat with LocalBiz AI Assistant"
           >
-            <Sparkles className="w-7 h-7 text-white" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 border-2 border-white" />
+            <Sparkles className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
+            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-white" />
           </button>
         </div>
       )}
 
       {/* Floating Chat Drawer / Window */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-[92vw] sm:w-[420px] h-[600px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-black/10 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-[92vw] sm:w-[420px] h-[580px] max-h-[85vh] bg-white rounded-3xl shadow-2xl border border-black/10 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
           
           {/* Header */}
           <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
@@ -140,20 +184,41 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
               <div>
                 <div className="flex items-center space-x-2">
                   <h3 className="font-bold text-sm tracking-wide">Bazaar Buddy</h3>
-                  <span className="px-2 py-0.2 rounded-full text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
-                    Space Bunny 1M
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center space-x-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>AI Assistant</span>
                   </span>
                 </div>
                 <p className="text-[10px] text-slate-400">Autonomous LocalBiz AI Agent</p>
               </div>
             </div>
 
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center space-x-1">
+              <button
+                onClick={() =>
+                  setMessages([
+                    {
+                      id: 'welcome',
+                      sender: 'assistant',
+                      text: "Namaste! I am **Bazaar Buddy**, your autonomous AI Assistant & Business Coach for LocalBiz.\n\nI can **place orders**, **track shipments**, **mark orders as shipped**, query **real-time sales analytics**, or explain platform payment and pricing formulas. What would you like to do?",
+                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    },
+                  ])
+                }
+                className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition"
+                title="Reset conversation"
+                aria-label="Reset conversation"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition"
+                aria-label="Close assistant"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Quick Prompts Bar */}
@@ -178,7 +243,7 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
                 className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl p-3.5 space-y-2 leading-relaxed shadow-xs ${
+                  className={`max-w-[88%] rounded-2xl p-3.5 space-y-2 leading-relaxed shadow-xs ${
                     m.sender === 'user'
                       ? 'bg-slate-900 text-white rounded-br-xs'
                       : 'bg-white text-slate-800 border border-black/[0.06] rounded-bl-xs'
@@ -192,9 +257,9 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
                     </div>
                   )}
 
-                  {/* Message Content formatted with line breaks */}
-                  <div className="whitespace-pre-line font-sans text-xs">
-                    {m.text}
+                  {/* Message Content rendered with rich markdown formatting */}
+                  <div>
+                    {renderFormattedText(m.text, m.sender === 'user')}
                   </div>
 
                   {/* Contextual Link Button */}
@@ -223,31 +288,26 @@ export const AIAssistantWidget: React.FC<AIAssistantWidgetProps> = ({
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Box */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="p-3 border-t border-slate-100 bg-white flex items-center space-x-2"
-          >
+          {/* Input Bar */}
+          <div className="p-3 bg-white border-t border-slate-100 flex items-center space-x-2">
             <input
               type="text"
-              placeholder="Ask anything or tell me to place/ship an order..."
+              placeholder="Ask anything or place an order..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               disabled={loading}
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-full px-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition"
+              className="flex-1 px-4 py-2.5 rounded-full border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
             />
-
             <button
-              type="submit"
+              onClick={() => handleSend()}
               disabled={!input.trim() || loading}
-              className="w-9 h-9 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shrink-0 disabled:opacity-40 transition shadow-xs cursor-pointer"
+              className="p-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white transition shadow-sm cursor-pointer"
+              aria-label="Send message"
             >
               <Send className="w-4 h-4" />
             </button>
-          </form>
+          </div>
 
         </div>
       )}

@@ -1,34 +1,52 @@
 import React, { useEffect, useState } from 'react';
-import { X, Package, Clock, CheckCircle2, Truck, RefreshCw } from 'lucide-react';
-import { Order } from '../types';
-import { fetchOrders } from '../services/api';
+import { X, Package, Clock, CheckCircle2, Truck, RefreshCw, User as UserIcon } from 'lucide-react';
+import type { Order, User } from '../types';
+import { fetchOrders, fetchUserOrders } from '../services/api';
 
 interface OrdersModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUser?: User | null;
 }
 
-export const OrdersModal: React.FC<OrdersModalProps> = ({ isOpen, onClose }) => {
+export const OrdersModal: React.FC<OrdersModalProps> = ({ isOpen, onClose, currentUser }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
+  const [filterMine, setFilterMine] = useState(true);
 
+  // Handle ESC key
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     if (isOpen) {
-      loadOrders();
+      window.addEventListener('keydown', handleKeyDown);
     }
-  }, [isOpen]);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const data = await fetchOrders();
-      setOrders(data);
+      if (currentUser && filterMine) {
+        const data = await fetchUserOrders(currentUser.id);
+        setOrders(data);
+      } else {
+        const data = await fetchOrders();
+        setOrders(data);
+      }
     } catch (err) {
       console.error('Failed to load orders', err);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isOpen) {
+      loadOrders();
+    }
+  }, [isOpen, currentUser, filterMine]);
 
   if (!isOpen) return null;
 

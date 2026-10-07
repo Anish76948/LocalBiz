@@ -31,7 +31,7 @@ def run_tests():
 
     # Test 3: Autonomous Order Placement
     print("--- TEST 3: Autonomous Order Placement via AI ---")
-    res3 = agent.process_message("Please order Aaji mango pickle for Shoaib Khan at Flat 204 Bandra Mumbai")
+    res3 = agent.process_message("Please order Aaji mango pickle for Anish at Flat 204 Bandra Mumbai")
     print("Action Taken:", res3["action_taken"])
     print("Reply:\n", res3["reply"], "\n")
     assert res3["action_taken"] == "AUTONOMOUS_ORDER_PLACED", "Test 3 Failed"

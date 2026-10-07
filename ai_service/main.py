@@ -29,7 +29,7 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., example="Order Aaji mango pickle for Shoaib at Bandra")
+    message: str = Field(..., example="Order Aaji mango pickle for Anish at Bandra")
     user_role: Optional[str] = Field("customer", example="customer or vendor")
     session_id: Optional[str] = Field("default-session", example="session-123")
 

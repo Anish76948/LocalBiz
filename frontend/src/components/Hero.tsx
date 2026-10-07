@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Star, Sparkles, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Search, Star, Sparkles, ArrowRight, ShieldCheck, X } from 'lucide-react';
 
 interface HeroProps {
   searchTerm: string;
@@ -7,6 +7,7 @@ interface HeroProps {
   activeCategory: string;
   onSelectCategory: (cat: string) => void;
   onExplore: () => void;
+  onSelectVendor?: (vendorId: number) => void;
 }
 
 export const Hero: React.FC<HeroProps> = ({
@@ -15,6 +16,7 @@ export const Hero: React.FC<HeroProps> = ({
   activeCategory,
   onSelectCategory,
   onExplore,
+  onSelectVendor,
 }) => {
   const categories = [
     { label: 'All Items', slug: 'all' },
@@ -65,6 +67,17 @@ export const Hero: React.FC<HeroProps> = ({
                   onChange={(e) => onSearchChange(e.target.value)}
                   className="w-full bg-transparent text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
                 />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => onSearchChange('')}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition shrink-0"
+                    title="Clear search"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
               {/* Category Pills inside Search Bar */}
@@ -122,7 +135,13 @@ export const Hero: React.FC<HeroProps> = ({
               </div>
 
               {/* Main Artisan Card */}
-              <div className="bg-white rounded-3xl p-5 shadow-xl border border-black/[0.06] transition hover:shadow-2xl">
+              <div
+                onClick={() => onSelectVendor?.(1)}
+                className="bg-white rounded-3xl p-5 shadow-xl border border-black/[0.06] transition hover:shadow-2xl cursor-pointer group"
+                role="button"
+                tabIndex={0}
+                aria-label="View Priya's Studio artisan profile"
+              >
                 
                 {/* Image */}
                 <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 mb-4">

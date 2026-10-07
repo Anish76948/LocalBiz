@@ -269,13 +269,13 @@ class LocalBizAgent:
             return {
                 "reply": open_ended_answer,
                 "action_taken": "LLM_OPEN_ASSISTANT",
-                "data": {"model": self.model_name}
+                "data": {"status": "online"}
             }
 
         reply = (
             f"Namaste! I am **{self.name}**, your autonomous assistant for LocalBiz.\n\n"
             f"Here is what I can do for you right now:\n"
-            f"1. 🛍️ **Place an Order:** Ask me *'Order Aaji mango pickle for Shoaib at Bandra'*\n"
+            f"1. 🛍️ **Place an Order:** Ask me *'Order Aaji mango pickle for Anish at Bandra'*\n"
             f"2. 📦 **Track an Order:** Ask *'Track order LB-7453'*\n"
             f"3. 🚚 **Vendor Fulfillment:** Tell me *'Mark order LB-7453 as Shipped'*\n"
             f"4. 📊 **Business Analytics:** Ask *'What is our total sales and orders count?'*\n"

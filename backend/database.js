@@ -6,9 +6,39 @@ const db = new DatabaseSync(dbPath);
 
 db.exec('PRAGMA foreign_keys = ON;');
 
+const crypto = require('node:crypto');
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  try {
+    const [salt, key] = storedHash.split(':');
+    const keyBuffer = Buffer.from(key, 'hex');
+    const derivedKey = crypto.scryptSync(password, salt, 64);
+    return crypto.timingSafeEqual(keyBuffer, derivedKey);
+  } catch {
+    return false;
+  }
+}
+
 // Initialize tables
 function initDatabase() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT CHECK(role IN ('customer', 'artisan', 'admin')) DEFAULT 'customer',
+      phone TEXT,
+      address TEXT,
+      avatar TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS vendors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -69,6 +99,16 @@ function initDatabase() {
       image_url TEXT,
       FOREIGN KEY (order_id) REFERENCES orders(id)
     );
+
+    CREATE TABLE IF NOT EXISTS reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      customer_name TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      comment TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    );
   `);
 
   // Seed sample data if empty
@@ -76,6 +116,27 @@ function initDatabase() {
   if (countVendors.count === 0) {
     seedData();
   }
+
+  const countReviews = db.prepare('SELECT count(*) as count FROM reviews').get();
+  if (countReviews.count === 0) {
+    seedReviews();
+  }
+
+  const countUsers = db.prepare('SELECT count(*) as count FROM users').get();
+  if (countUsers.count === 0) {
+    seedUsers();
+  }
+}
+
+function seedReviews() {
+  const insertRev = db.prepare('INSERT INTO reviews (product_id, customer_name, rating, comment) VALUES (?, ?, ?, ?)');
+  insertRev.run(1, 'Sunita Mehta', 5, 'Exceptional finish! The matte stoneware glaze looks stunning on our dining table.');
+  insertRev.run(1, 'Rohan Kapoor', 5, 'Heavy, durable and truly artisanal. Worth every rupee.');
+  insertRev.run(2, 'Rajiv Verma', 5, 'Pure unadulterated forest honey. The honeycomb pieces taste divine with morning tea.');
+  insertRev.run(3, 'Meera Iyer', 5, 'Fine organic weave, soft on skin, authentic Maheshwari craftsmanship.');
+  insertRev.run(4, 'Kavita Deshmukh', 5, 'Authentic traditional Konkani recipe without chemical preservatives. Reminds me of my grandmother.');
+  insertRev.run(5, 'Dr. Amit Sen', 5, 'Aromatic Kashmiri saffron kahwa, whole cardamom pods and crushed almonds. Superb blend.');
+  insertRev.run(6, 'Vikramaditya S.', 5, 'Solid brass lost-wax diya with resonant temple acoustic tone. Pure heritage.');
 }
 
 function seedData() {
@@ -252,7 +313,59 @@ function seedData() {
   console.log('Seeding complete! 4 vendors, 6 artisan products ready.');
 }
 
+function seedUsers() {
+  console.log('Seeding demo authentication accounts...');
+  const insertUser = db.prepare(`
+    INSERT INTO users (name, email, password_hash, role, phone, address, avatar)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const demoPassHash = hashPassword('Pass@123');
+
+  insertUser.run(
+    'Aditi Khandge',
+    'aditi@tcet.edu',
+    demoPassHash,
+    'customer',
+    '9820123456',
+    'Thakur Village, Kandivali East, Mumbai 400101',
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'
+  );
+
+  insertUser.run(
+    'Anish',
+    'anish@tcet.edu',
+    demoPassHash,
+    'customer',
+    '9876543210',
+    'Bandra West, Mumbai 400050',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80'
+  );
+
+  insertUser.run(
+    'Priya Sharma',
+    'priya@pottery.in',
+    demoPassHash,
+    'artisan',
+    '9812345678',
+    'Amber Road Studio, Jaipur, Rajasthan 302001',
+    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80'
+  );
+
+  insertUser.run(
+    'Aaji Parulekar',
+    'aaji@kitchen.in',
+    demoPassHash,
+    'artisan',
+    '9822334455',
+    'Ratnagiri, Maharashtra 415612',
+    'https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?auto=format&fit=crop&w=200&q=80'
+  );
+}
+
 module.exports = {
   db,
   initDatabase,
+  hashPassword,
+  verifyPassword,
 };

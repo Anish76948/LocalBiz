@@ -1,6 +1,6 @@
 # LocalBiz — AI-Powered Digital Marketplace for Local Entrepreneurs
 
-> Prototype for Group 6 (Shoaib Khan & Aditi Khandge), TCET Mumbai.
+> Autonomous Prototype by Anish & Aditi Khandge, TCET Mumbai.
 > Designed with the **Editorial Craft & Luxury Light** aesthetic matching the project reference mockup.
 
 ---

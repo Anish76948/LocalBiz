@@ -26,9 +26,36 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     badge: 'Artisan Made',
   });
   const [loading, setLoading] = useState(false);
+  const [generatingAI, setGeneratingAI] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleGenerateAIDescription = async () => {
+    if (!formData.name) {
+      setError('Please enter a product name first so the AI can describe it.');
+      return;
+    }
+    setGeneratingAI(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Write a compelling 2-sentence artisanal product description for "${formData.name}" (category: ${formData.category_slug}). Focus on authentic Indian regional craft heritage and sustainable materials. Output only the description text.`,
+        }),
+      });
+      const data = await res.json();
+      if (data && data.reply) {
+        setFormData((prev) => ({ ...prev, description: data.reply }));
+      }
+    } catch (err) {
+      console.error('Failed to generate AI description:', err);
+    } finally {
+      setGeneratingAI(false);
+    }
+  };
 
   // Preset sample image shortcuts to speed up testing
   const presets = [
@@ -212,7 +239,18 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Description</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">Artisan Craft Description</label>
+              <button
+                type="button"
+                onClick={handleGenerateAIDescription}
+                disabled={generatingAI}
+                className="text-[11px] text-emerald-700 hover:text-emerald-900 font-semibold flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-spin-subtle" />
+                <span>{generatingAI ? 'Drafting craft story...' : '✨ AI Generate Description'}</span>
+              </button>
+            </div>
             <textarea
               rows={3}
               placeholder="Describe the artisan craft technique, materials, care instructions..."

@@ -1,0 +1,53 @@
+# LocalBiz Execution Progress Log (Ralph Loop)
+Initialized at: 2026-10-07T21:32:00+05:30
+Updated at: 2026-10-07T22:22:15+05:30
+
+Session Goal: Complete prototype with full security, robust features, and design mastery.
+Rule Check: NO GIT PUSH command was executed under any circumstance as strictly instructed by user.
+--------------------------------------------------
+
+1. Footer Clean-up:
+   - Removed old project labels from frontend footer.
+   - Replaced with standard professional brand copyright: "LocalBiz • Authentic Indian Artisan Marketplace • © 2026 All rights reserved".
+
+2. Authentication & RBAC System (/backend-security-coder):
+   - Created `users` SQLite table with columns: `id`, `name`, `email`, `password_hash`, `role`, `phone`, `address`, `avatar`.
+   - Seeded 4 demo accounts:
+     * Aditi Khandge (`aditi@tcet.edu` / `Pass@123`, Customer, Mumbai)
+     * Anish (`anish@tcet.edu` / `Pass@123`, Customer, Mumbai)
+     * Priya Sharma (`priya@pottery.in` / `Pass@123`, Artisan, Jaipur)
+     * Aaji Parulekar (`aaji@kitchen.in` / `Pass@123`, Artisan, Ratnagiri)
+   - Password hashing implemented with Node 22 `crypto.scryptSync` (64-byte derived key, 16-byte random salt).
+   - Timing-attack protected comparison via `crypto.timingSafeEqual`.
+   - Dedicated `authLimiter` (30 attempts / 15 min) on auth endpoints.
+   - Added `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/demo-users`, and `GET /api/users/:id/orders`.
+
+3. Auth UI & User Experience (/design-mastery):
+   - Built `AuthModal.tsx` supporting:
+     * Sign In & Sign Up tab switching.
+     * Role selection: Conscious Buyer vs Artisan/Maker.
+     * 1-Click Viva Demo Login buttons for Aditi (Customer) and Priya (Artisan).
+     * ARIA accessibility, focus states, and ESC key listener.
+   - Updated `Navbar.tsx`:
+     * Logged-out: "Sign in now" button opens AuthModal.
+     * Logged-in: Displays user avatar + first name + interactive dropdown (User Role badge, My Orders, Artisan Studio Portal toggle, Sign Out).
+   - Updated `CheckoutModal.tsx`:
+     * Automatically pre-fills logged-in user's name, phone, and delivery address.
+   - Updated `OrdersModal.tsx`:
+     * Displays personalized order history for logged-in user.
+
+4. Wishlist / Favorites System:
+   - Added interactive `Heart` toggle on all `ProductCard` components.
+   - Persistent `localStorage` state with instant Toast feedback.
+
+5. Checkout Promo Code Engine:
+   - Added interactive discount coupons (`VOCAL4LOCAL` - ₹100 flat off, `ARTISAN10` - 10% off).
+   - Real-time recalculation of final total to pay and coupon tags in order payload.
+
+6. AI Craft Description Generator:
+   - Added "✨ AI Generate Description" trigger in `AddProductModal.tsx`.
+   - Automatically drafts authentic, evocative craft stories using Space Bunny LLM.
+
+7. Full Automated Verification:
+   - Executed `test_full_suite.js`.
+   - 14/14 automated tests passing successfully.

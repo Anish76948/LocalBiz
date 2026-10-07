@@ -7,7 +7,7 @@ Give this entire file to any AI image generator or assistant. It contains the pr
 ## 1. Project Background
 
 - Project: **LocalBiz — AI-Powered Digital Marketplace for Local Entrepreneurs**
-- Team: Group 6 — Shoaib Khan & Aditi Khandge (Final Year Project)
+- Team: Group 6 — Anish & Aditi Khandge (Final Year Project)
 - Goal: Generate 21 premium professional UI mockup images, one per screen, to use as design references in the project report and demo.
 - Image generator being used: **Gemini (Nano Banana)** — chosen because it renders small UI text more accurately than DALL·E.
 - Workflow: one screen at a time. A detailed prompt is written, the image is generated, then evaluated and either accepted or regenerated with targeted fixes.

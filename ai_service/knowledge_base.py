@@ -105,7 +105,7 @@ KNOWLEDGE_DOCS = [
         "title": "LocalBiz Mission, UN SDGs, and Viksit Bharat 2047",
         "content": (
             "LocalBiz Mission & Institutional Background:\n"
-            "- Final Year Engineering Project by Group 06: Shoaib Khan & Aditi Khandge at TCET Mumbai.\n"
+            "- Final Year Engineering Project by Group 06: Anish & Aditi Khandge at TCET Mumbai.\n"
             "- SDG 1 (No Poverty): Empowering home-based micro-producers with direct digital market access.\n"
             "- SDG 8 (Decent Work & Economic Growth): Preserving traditional Indian crafts and supporting sustainable livelihoods.\n"
             "- Viksit Bharat @ 2047: Fostering technology-enabled grassroots entrepreneurship across Tier 2/3 cities and rural clusters."

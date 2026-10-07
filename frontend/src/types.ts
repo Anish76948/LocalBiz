@@ -67,3 +67,22 @@ export interface DashboardStats {
   totalOrders: number;
   totalRevenue: number;
 }
+
+export interface Review {
+  id: number;
+  product_id: number;
+  customer_name: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  role: 'customer' | 'artisan' | 'admin';
+  phone?: string;
+  address?: string;
+  avatar?: string;
+}
