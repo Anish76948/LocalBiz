@@ -14,7 +14,7 @@ import { AIAssistantWidget } from './components/AIAssistantWidget';
 import { AuthModal } from './components/AuthModal';
 import { Toast, ToastMessage } from './components/Toast';
 import type { Product, CartItem, Order, User } from './types';
-import { fetchProducts } from './services/api';
+import { fetchProducts, fetchCurrentUser, logoutUser } from './services/api';
 import { Sparkles, SlidersHorizontal, ArrowUpRight, ArrowUpDown, Heart } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -24,16 +24,21 @@ export const App: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState('all');
   const [sortBy, setSortBy] = useState('featured');
 
-  // User Authentication State
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem('localbiz_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  // User Authentication State (Stored securely via httpOnly session cookie)
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  // Restore session from httpOnly cookie on mount
+  useEffect(() => {
+    fetchCurrentUser().then((user) => {
+      if (user) {
+        setCurrentUser(user);
+        if (user.role === 'artisan') {
+          setIsVendorMode(true);
+        }
+      }
+    });
+  }, []);
 
   // Wishlist State
   const [wishlist, setWishlist] = useState<number[]>(() => {
@@ -161,16 +166,17 @@ export const App: React.FC = () => {
 
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
-    localStorage.setItem('localbiz_user', JSON.stringify(user));
     addToast('success', `Welcome back, ${user.name}!`);
     if (user.role === 'artisan') {
       setIsVendorMode(true);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch {}
     setCurrentUser(null);
-    localStorage.removeItem('localbiz_user');
     setIsVendorMode(false);
     addToast('info', 'Signed out successfully.');
   };

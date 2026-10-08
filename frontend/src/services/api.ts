@@ -2,6 +2,52 @@ import type { Product, Vendor, Order, DashboardStats, Review, User } from '../ty
 
 const API_BASE = '/api';
 
+let cachedCsrfToken: string | null = null;
+
+/**
+ * Retrieves and caches CSRF token from backend
+ */
+export async function getCsrfToken(): Promise<string> {
+  if (cachedCsrfToken) return cachedCsrfToken;
+  try {
+    const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      cachedCsrfToken = data.csrfToken;
+      return cachedCsrfToken || '';
+    }
+  } catch (err) {
+    console.warn('Failed to fetch CSRF token:', err);
+  }
+  return '';
+}
+
+/**
+ * Secure fetch wrapper with credentials and anti-CSRF headers for state-changing requests
+ */
+async function secureFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+
+  if (!headers.has('Content-Type') && options.body && typeof options.body === 'string') {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  // State-changing requests require CSRF token
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) {
+    const token = await getCsrfToken();
+    if (token) {
+      headers.set('X-CSRF-Token', token);
+    }
+  }
+
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include', // Ensures httpOnly session cookies are transmitted
+  });
+}
+
 export async function fetchProducts(
   category?: string,
   search?: string,
@@ -14,23 +60,22 @@ export async function fetchProducts(
   if (sort && sort !== 'featured') params.append('sort', sort);
   if (vendorId) params.append('vendor_id', vendorId.toString());
 
-  const res = await fetch(`${API_BASE}/products?${params.toString()}`);
+  const res = await secureFetch(`${API_BASE}/products?${params.toString()}`);
   if (!res.ok) throw new Error('Failed to fetch products');
   const data = await res.json();
   return data.products || [];
 }
 
 export async function fetchProductById(id: number): Promise<Product> {
-  const res = await fetch(`${API_BASE}/products/${id}`);
+  const res = await secureFetch(`${API_BASE}/products/${id}`);
   if (!res.ok) throw new Error('Failed to fetch product details');
   const data = await res.json();
   return data.product;
 }
 
 export async function createProduct(productData: Partial<Product>): Promise<{ id: number; message: string }> {
-  const res = await fetch(`${API_BASE}/products`, {
+  const res = await secureFetch(`${API_BASE}/products`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(productData),
   });
   if (!res.ok) {
@@ -41,26 +86,29 @@ export async function createProduct(productData: Partial<Product>): Promise<{ id
 }
 
 export async function deleteProduct(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/products/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete product');
+  const res = await secureFetch(`${API_BASE}/products/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to delete product');
+  }
 }
 
 export async function fetchVendors(): Promise<Vendor[]> {
-  const res = await fetch(`${API_BASE}/vendors`);
+  const res = await secureFetch(`${API_BASE}/vendors`);
   if (!res.ok) throw new Error('Failed to fetch vendors');
   const data = await res.json();
   return data.vendors || [];
 }
 
 export async function fetchVendorById(id: number): Promise<{ vendor: Vendor; products: Product[] }> {
-  const res = await fetch(`${API_BASE}/vendors/${id}`);
+  const res = await secureFetch(`${API_BASE}/vendors/${id}`);
   if (!res.ok) throw new Error('Failed to fetch vendor profile');
   const data = await res.json();
   return { vendor: data.vendor, products: data.products || [] };
 }
 
 export async function fetchProductReviews(productId: number): Promise<Review[]> {
-  const res = await fetch(`${API_BASE}/products/${productId}/reviews`);
+  const res = await secureFetch(`${API_BASE}/products/${productId}/reviews`);
   if (!res.ok) throw new Error('Failed to fetch reviews');
   const data = await res.json();
   return data.reviews || [];
@@ -72,9 +120,8 @@ export async function createReview(reviewPayload: {
   rating: number;
   comment: string;
 }): Promise<void> {
-  const res = await fetch(`${API_BASE}/reviews`, {
+  const res = await secureFetch(`${API_BASE}/reviews`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(reviewPayload),
   });
   if (!res.ok) {
@@ -91,9 +138,8 @@ export async function createOrder(orderPayload: {
   total_amount: number;
   items: Array<{ id: number; name: string; price: number; quantity: number; image_url?: string }>;
 }): Promise<{ order: Order; message: string }> {
-  const res = await fetch(`${API_BASE}/orders`, {
+  const res = await secureFetch(`${API_BASE}/orders`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(orderPayload),
   });
   if (!res.ok) {
@@ -104,37 +150,45 @@ export async function createOrder(orderPayload: {
 }
 
 export async function fetchOrders(): Promise<Order[]> {
-  const res = await fetch(`${API_BASE}/orders`);
+  const res = await secureFetch(`${API_BASE}/orders`);
   if (!res.ok) throw new Error('Failed to fetch orders');
   const data = await res.json();
   return data.orders || [];
 }
 
 export async function updateOrderStatus(orderId: number, status: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/orders/${orderId}/status`, {
+  const res = await secureFetch(`${API_BASE}/orders/${orderId}/status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   });
-  if (!res.ok) throw new Error('Failed to update order status');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to update order status');
+  }
 }
 
 export async function fetchStats(): Promise<DashboardStats> {
-  const res = await fetch(`${API_BASE}/stats`);
+  const res = await secureFetch(`${API_BASE}/stats`);
   if (!res.ok) throw new Error('Failed to fetch stats');
   const data = await res.json();
   return data.stats;
 }
 
-export async function loginUser(credentials: { email: string; password: string }): Promise<{ user: User; message: string }> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+export async function loginUser(credentials: {
+  email: string;
+  password: string;
+  mfaCode?: string;
+}): Promise<{ user?: User; mfaRequired?: boolean; message: string }> {
+  const res = await secureFetch(`${API_BASE}/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(credentials),
   });
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.message || 'Login failed');
+  }
+  if (data.csrfToken) {
+    cachedCsrfToken = data.csrfToken;
   }
   return data;
 }
@@ -147,28 +201,66 @@ export async function registerUser(payload: {
   phone?: string;
   address?: string;
 }): Promise<{ user: User; message: string }> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+  const res = await secureFetch(`${API_BASE}/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.message || 'Registration failed');
   }
+  if (data.csrfToken) {
+    cachedCsrfToken = data.csrfToken;
+  }
   return data;
 }
 
+export async function fetchCurrentUser(): Promise<User | null> {
+  try {
+    const res = await secureFetch(`${API_BASE}/auth/me`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.user || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function logoutUser(): Promise<void> {
+  await secureFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  cachedCsrfToken = null;
+}
+
 export async function fetchDemoUsers(): Promise<User[]> {
-  const res = await fetch(`${API_BASE}/auth/demo-users`);
+  const res = await secureFetch(`${API_BASE}/auth/demo-users`);
   if (!res.ok) throw new Error('Failed to fetch demo accounts');
   const data = await res.json();
   return data.users || [];
 }
 
 export async function fetchUserOrders(userId: number): Promise<Order[]> {
-  const res = await fetch(`${API_BASE}/users/${userId}/orders`);
-  if (!res.ok) throw new Error('Failed to fetch user orders');
+  const res = await secureFetch(`${API_BASE}/users/${userId}/orders`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to fetch user orders');
+  }
   const data = await res.json();
   return data.orders || [];
+}
+
+export async function setupMfa(): Promise<{ secret: string; sampleVerificationCode: string }> {
+  const res = await secureFetch(`${API_BASE}/auth/mfa/setup`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to setup MFA');
+  return res.json();
+}
+
+export async function verifyMfa(code: string, secret: string): Promise<void> {
+  const res = await secureFetch(`${API_BASE}/auth/mfa/verify`, {
+    method: 'POST',
+    body: JSON.stringify({ code, secret }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'MFA verification failed');
+  }
 }

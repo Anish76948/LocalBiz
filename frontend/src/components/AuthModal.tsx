@@ -23,6 +23,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [role, setRole] = useState<'customer' | 'artisan'>('customer');
+  const [isMfaPrompt, setIsMfaPrompt] = useState(false);
+  const [mfaCode, setMfaCode] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +32,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   useEffect(() => {
     setMode(initialMode);
     setError(null);
+    setIsMfaPrompt(false);
+    setMfaCode('');
   }, [initialMode, isOpen]);
 
   // Handle ESC key
@@ -52,9 +56,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       if (mode === 'signin') {
-        const res = await loginUser({ email, password });
-        onLoginSuccess(res.user);
-        onClose();
+        const res = await loginUser({ email, password, mfaCode: mfaCode || undefined });
+        if (res.mfaRequired) {
+          setIsMfaPrompt(true);
+          setLoading(false);
+          return;
+        }
+        if (res.user) {
+          onLoginSuccess(res.user);
+          onClose();
+        }
       } else {
         const res = await registerUser({
           name,
@@ -64,8 +75,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           phone,
           address,
         });
-        onLoginSuccess(res.user);
-        onClose();
+        if (res.user) {
+          onLoginSuccess(res.user);
+          onClose();
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed. Please check your credentials.');
@@ -80,8 +93,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       const res = await loginUser({ email: demoEmail, password: 'Pass@123' });
-      onLoginSuccess(res.user);
-      onClose();
+      if (res.user) {
+        onLoginSuccess(res.user);
+        onClose();
+      }
     } catch (err: any) {
       setError(err.message || 'Demo login failed.');
     } finally {
@@ -214,8 +229,48 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'signup' && (
+          {isMfaPrompt ? (
+            <form onSubmit={handleSubmit} className="space-y-4 animate-in fade-in duration-200">
+              <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 text-xs text-emerald-900 leading-relaxed">
+                <span className="font-bold">🔐 Multi-Factor Authentication Required:</span> Please enter the 6-digit verification code from your authenticator device.
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700 block text-center">6-Digit 2FA Code</label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full text-center tracking-[0.4em] text-2xl font-bold py-3 rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50/50"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || mfaCode.length < 6}
+                className="w-full py-3.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition shadow-md glow-emerald disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? 'Verifying Code...' : 'Verify & Sign In'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMfaPrompt(false);
+                  setMfaCode('');
+                }}
+                className="w-full py-1 text-xs text-slate-500 hover:text-slate-800 transition"
+              >
+                ← Back to Password Login
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {mode === 'signup' && (
               <>
                 {/* Role Selector */}
                 <div className="space-y-1.5">
@@ -348,6 +403,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 : 'Create Account & Continue'}
             </button>
           </form>
+          )}
 
           <div className="text-center pt-2">
             <p className="text-xs text-slate-500">

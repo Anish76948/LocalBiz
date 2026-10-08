@@ -36,7 +36,11 @@ function initDatabase() {
       phone TEXT,
       address TEXT,
       avatar TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      vendor_id INTEGER,
+      mfa_enabled INTEGER DEFAULT 0,
+      mfa_secret TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id)
     );
 
     CREATE TABLE IF NOT EXISTS vendors (
@@ -80,13 +84,15 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_number TEXT UNIQUE NOT NULL,
+      user_id INTEGER,
       customer_name TEXT NOT NULL,
       customer_phone TEXT NOT NULL,
       customer_address TEXT NOT NULL,
       payment_method TEXT DEFAULT 'UPI (Sandbox)',
       total_amount REAL NOT NULL,
       status TEXT DEFAULT 'PLACED',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS order_items (
@@ -110,6 +116,12 @@ function initDatabase() {
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
   `);
+
+  // Safe migrations for security enhancements
+  try { db.exec('ALTER TABLE users ADD COLUMN vendor_id INTEGER;'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN mfa_enabled INTEGER DEFAULT 0;'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN mfa_secret TEXT;'); } catch {}
+  try { db.exec('ALTER TABLE orders ADD COLUMN user_id INTEGER;'); } catch {}
 
   // Seed sample data if empty
   const countVendors = db.prepare('SELECT count(*) as count FROM vendors').get();
@@ -316,8 +328,8 @@ function seedData() {
 function seedUsers() {
   console.log('Seeding demo authentication accounts...');
   const insertUser = db.prepare(`
-    INSERT INTO users (name, email, password_hash, role, phone, address, avatar)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (name, email, password_hash, role, phone, address, avatar, vendor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const demoPassHash = hashPassword('Pass@123');
@@ -329,7 +341,8 @@ function seedUsers() {
     'customer',
     '9820123456',
     'Thakur Village, Kandivali East, Mumbai 400101',
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    null
   );
 
   insertUser.run(
@@ -339,7 +352,8 @@ function seedUsers() {
     'customer',
     '9876543210',
     'Bandra West, Mumbai 400050',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80'
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
+    null
   );
 
   insertUser.run(
@@ -349,7 +363,8 @@ function seedUsers() {
     'artisan',
     '9812345678',
     'Amber Road Studio, Jaipur, Rajasthan 302001',
-    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80'
+    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
+    1
   );
 
   insertUser.run(
@@ -359,9 +374,16 @@ function seedUsers() {
     'artisan',
     '9822334455',
     'Ratnagiri, Maharashtra 415612',
-    'https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?auto=format&fit=crop&w=200&q=80'
+    'https://images.unsplash.com/photo-1581579438747-1dc8d17bbce4?auto=format&fit=crop&w=200&q=80',
+    2
   );
 }
+
+// Update existing records for vendor bindings if already seeded
+try {
+  db.exec("UPDATE users SET vendor_id = 1 WHERE email = 'priya@pottery.in' AND vendor_id IS NULL;");
+  db.exec("UPDATE users SET vendor_id = 2 WHERE email = 'aaji@kitchen.in' AND vendor_id IS NULL;");
+} catch {}
 
 module.exports = {
   db,

@@ -4,60 +4,125 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('node:path');
 const { db, initDatabase, hashPassword, verifyPassword } = require('./database');
+const {
+  signJwt,
+  generateCsrfToken,
+  serializeCookie,
+  parseCookies,
+  isStrongPassword,
+  generateMfaSecret,
+  generateOtpCode,
+  verifyOtpCode,
+} = require('./auth');
+const {
+  escapeHtml,
+  sanitizeInput,
+  isSafePublicUrl,
+  authenticateToken,
+  optionalAuth,
+  requireRole,
+  csrfProtection,
+  verifyWebhookSignature,
+  securityLogger,
+} = require('./security');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'localbiz-webhook-hmac-secret-key-2026';
 
-// Initialize SQLite schema and seeds
+// Initialize SQLite schema, safe migrations, and seed data
 initDatabase();
 
-// 1. SECURITY HEADERS (OWASP / Helmet)
+// 1. TIGHTENED CORS SETTINGS
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5000',
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (such as same-origin, curl, mobile clients)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Blocked by CORS policy (unauthorized origin)'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
+  })
+);
+
+// 2. TIGHTENED SECURITY HEADERS (OWASP / Helmet)
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'https://images.unsplash.com', 'https://*.unsplash.com'],
         connectSrc: ["'self'", 'http://localhost:5000', 'http://127.0.0.1:8000'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
       },
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
+    xContentTypeOptions: true,
+    xDnsPrefetchControl: { allow: false },
+    xFrameOptions: { action: 'deny' },
   })
 );
 
-app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '500kb' }));
 
-// 2. RATE LIMITING
+// 3. RATE LIMITING SUITE
+const isTestEnv = process.env.NODE_ENV === 'test';
+
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, // limit each IP to 300 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: isTestEnv ? 5000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later.' },
 });
 app.use('/api/', apiLimiter);
 
-const orderLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30, // max 30 orders per 15 min per IP
-  message: { success: false, error: 'Order rate limit reached. Please wait a few moments.' },
-});
-
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30, // max 30 auth attempts per 15 min per IP
+  max: isTestEnv ? 2000 : 100, // 100 login/register attempts per 15 min per IP in prod, 2000 in test
   message: { success: false, message: 'Too many authentication attempts. Please try again later.' },
 });
 
-// Helper: Input Sanitization
-function sanitizeString(str, maxLen = 255) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/[<>]/g, '').trim().slice(0, maxLen);
-}
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTestEnv ? 500 : 20,
+  message: { success: false, message: 'Too many MFA verification attempts. Please wait 15 minutes.' },
+});
+
+const orderLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTestEnv ? 500 : 30,
+  message: { success: false, error: 'Order rate limit reached. Please wait a few moments.' },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: isTestEnv ? 500 : 25, // max 25 AI queries per 10 min
+  message: { success: false, reply: 'AI Assistant rate limit reached. Please wait a moment before asking again.' },
+});
+
+const reviewLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTestEnv ? 500 : 10,
+  message: { success: false, message: 'Review submission rate limit reached.' },
+});
 
 function isValidPhone(phone) {
   if (typeof phone !== 'string') return false;
@@ -65,14 +130,37 @@ function isValidPhone(phone) {
   return digits.length >= 10 && digits.length <= 15;
 }
 
+// 4. CSRF TOKEN ISSUANCE & VERIFICATION
+app.get('/api/csrf-token', (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies['localbiz_session'] ? 'auth' : 'anon';
+  const token = generateCsrfToken(sessionId);
+
+  // Set anti-CSRF cookie readable by frontend client
+  res.setHeader(
+    'Set-Cookie',
+    serializeCookie('XSRF-TOKEN', token, {
+      httpOnly: false, // Client must read it to pass in X-CSRF-Token header
+      sameSite: 'Strict',
+      maxAge: 7200,
+    })
+  );
+
+  res.json({ success: true, csrfToken: token });
+});
+
+// Protect all state-changing API endpoints with CSRF protection
+app.use('/api', csrfProtection);
+
 // --- AUTHENTICATION & USERS ---
+
 app.post('/api/auth/register', authLimiter, (req, res) => {
   const { name, email, password, role = 'customer', phone = '', address = '' } = req.body;
 
-  const cleanName = sanitizeString(name, 100);
-  const cleanEmail = sanitizeString(email, 150).toLowerCase();
-  const cleanPhone = sanitizeString(phone, 30);
-  const cleanAddress = sanitizeString(address, 300);
+  const cleanName = escapeHtml(sanitizeInput(name, 100));
+  const cleanEmail = sanitizeInput(email, 150).toLowerCase();
+  const cleanPhone = sanitizeInput(phone, 30);
+  const cleanAddress = escapeHtml(sanitizeInput(address, 300));
   const validRole = role === 'artisan' ? 'artisan' : 'customer';
 
   if (!cleanName || cleanName.length < 2) {
@@ -84,8 +172,13 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
   }
 
-  if (typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
+  // Strong password policy enforcement
+  if (!isStrongPassword(password)) {
+    return res.status(400).json({
+      success: false,
+      message:
+        'Password must be at least 8 characters long and contain uppercase, lowercase, a number, and a special character.',
+    });
   }
 
   try {
@@ -106,7 +199,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     `);
     const result = stmt.run(cleanName, cleanEmail, passwordHash, validRole, cleanPhone, cleanAddress, defaultAvatar);
 
-    const user = {
+    const userPayload = {
       id: Number(result.lastInsertRowid),
       name: cleanName,
       email: cleanEmail,
@@ -114,18 +207,29 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
       phone: cleanPhone,
       address: cleanAddress,
       avatar: defaultAvatar,
+      vendor_id: null,
     };
 
-    res.status(201).json({ success: true, message: 'Account created successfully!', user });
+    // Issue JWT and set httpOnly cookie
+    const token = signJwt(userPayload, 86400); // 24 hours
+    const csrfToken = generateCsrfToken(String(userPayload.id));
+
+    res.setHeader('Set-Cookie', [
+      serializeCookie('localbiz_session', token, { httpOnly: true, sameSite: 'Strict', maxAge: 86400 }),
+      serializeCookie('XSRF-TOKEN', csrfToken, { httpOnly: false, sameSite: 'Strict', maxAge: 86400 }),
+    ]);
+
+    securityLogger.info('New user registered successfully', { email: cleanEmail, role: validRole });
+    res.status(201).json({ success: true, message: 'Account created successfully!', user: userPayload, csrfToken });
   } catch (err) {
-    console.error('Registration error:', err.message);
+    securityLogger.error('Registration error', { error: err.message });
     res.status(500).json({ success: false, message: 'Database error during registration.' });
   }
 });
 
 app.post('/api/auth/login', authLimiter, (req, res) => {
-  const { email, password } = req.body;
-  const cleanEmail = sanitizeString(email, 150).toLowerCase();
+  const { email, password, mfaCode } = req.body;
+  const cleanEmail = sanitizeInput(email, 150).toLowerCase();
 
   if (!cleanEmail || !password) {
     return res.status(400).json({ success: false, message: 'Email and password are required.' });
@@ -139,56 +243,188 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
 
     const isValid = verifyPassword(password, user.password_hash);
     if (!isValid) {
+      securityLogger.warn('Failed login attempt', { email: cleanEmail });
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
+    // Check Multi-Factor Authentication if enabled
+    if (user.mfa_enabled) {
+      if (!mfaCode) {
+        return res.status(200).json({
+          success: true,
+          mfaRequired: true,
+          message: 'Two-factor authentication required. Please enter your 6-digit code.',
+        });
+      }
+
+      const isMfaValid = verifyOtpCode(mfaCode, user.mfa_secret);
+      if (!isMfaValid) {
+        return res.status(401).json({ success: false, message: 'Invalid 2FA code. Please check and try again.' });
+      }
+    }
+
+    const userPayload = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      phone: user.phone || '',
+      address: user.address || '',
+      avatar: user.avatar || '',
+      vendor_id: user.vendor_id || null,
+      mfa_enabled: Boolean(user.mfa_enabled),
+    };
+
+    // Issue JWT and set httpOnly session cookie
+    const token = signJwt(userPayload, 86400);
+    const csrfToken = generateCsrfToken(String(user.id));
+
+    res.setHeader('Set-Cookie', [
+      serializeCookie('localbiz_session', token, { httpOnly: true, sameSite: 'Strict', maxAge: 86400 }),
+      serializeCookie('XSRF-TOKEN', csrfToken, { httpOnly: false, sameSite: 'Strict', maxAge: 86400 }),
+    ]);
+
+    securityLogger.info('Successful user login', { email: cleanEmail });
     res.json({
       success: true,
       message: 'Login successful!',
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone || '',
-        address: user.address || '',
-        avatar: user.avatar || '',
-      },
+      user: userPayload,
+      token, // Also return for testing suites
+      csrfToken,
     });
   } catch (err) {
-    console.error('Login error:', err.message);
+    securityLogger.error('Login error', { error: err.message });
     res.status(500).json({ success: false, message: 'Authentication failed due to server error.' });
+  }
+});
+
+// Restore current user session from httpOnly cookie
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT id, name, email, role, phone, address, avatar, vendor_id, mfa_enabled FROM users WHERE id = ?').get(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+    res.json({ success: true, user: { ...user, mfa_enabled: Boolean(user.mfa_enabled) } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to retrieve profile.' });
+  }
+});
+
+// Logout: Wipes httpOnly session cookie
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', [
+    serializeCookie('localbiz_session', '', { maxAge: 0 }),
+    serializeCookie('XSRF-TOKEN', '', { maxAge: 0 }),
+  ]);
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+// Change Password: Enforces old password verification and strong new password
+app.post('/api/auth/change-password', authenticateToken, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, message: 'Current and new password are required.' });
+  }
+
+  if (!isStrongPassword(newPassword)) {
+    return res.status(400).json({
+      success: false,
+      message: 'New password must be at least 8 characters with uppercase, lowercase, numbers, and symbols.',
+    });
+  }
+
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
+    }
+
+    const newHash = hashPassword(newPassword);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.user.id);
+
+    securityLogger.info('Password updated successfully', { userId: req.user.id });
+    res.json({ success: true, message: 'Password changed successfully.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update password.' });
+  }
+});
+
+// MFA: Setup initiation
+app.post('/api/auth/mfa/setup', authenticateToken, (req, res) => {
+  const secret = generateMfaSecret();
+  const sampleCode = generateOtpCode(secret);
+
+  res.json({
+    success: true,
+    secret,
+    sampleVerificationCode: sampleCode,
+    message: 'MFA setup initialized. Verify code to activate.',
+  });
+});
+
+// MFA: Verification & activation
+app.post('/api/auth/mfa/verify', authenticateToken, mfaLimiter, (req, res) => {
+  const { secret, code } = req.body;
+  if (!secret || !code) {
+    return res.status(400).json({ success: false, message: 'Secret and verification code are required.' });
+  }
+
+  const isValid = verifyOtpCode(code, secret);
+  if (!isValid) {
+    return res.status(400).json({ success: false, message: 'Invalid 2FA code. Please try again.' });
+  }
+
+  try {
+    db.prepare('UPDATE users SET mfa_enabled = 1, mfa_secret = ? WHERE id = ?').run(secret, req.user.id);
+    securityLogger.info('MFA enabled for user', { userId: req.user.id });
+    res.json({ success: true, message: 'Two-factor authentication successfully enabled.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to activate 2FA.' });
   }
 });
 
 app.get('/api/auth/demo-users', (req, res) => {
   try {
-    const users = db.prepare('SELECT id, name, email, role, phone, address, avatar FROM users ORDER BY id ASC').all();
+    const users = db.prepare('SELECT id, name, email, role, phone, address, avatar, vendor_id, mfa_enabled FROM users ORDER BY id ASC').all();
     res.json({ success: true, users });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to retrieve demo users.' });
   }
 });
 
-app.get('/api/users/:id/orders', (req, res) => {
-  const userId = Number.parseInt(req.params.id, 10);
-  if (Number.isNaN(userId)) {
+// --- BROKEN OBJECT LEVEL AUTHORIZATION (BOLA / IDOR) FIX ---
+// Enforces that users can only view their OWN orders (or admin)
+app.get('/api/users/:id/orders', authenticateToken, (req, res) => {
+  const targetUserId = Number.parseInt(req.params.id, 10);
+  if (Number.isNaN(targetUserId)) {
     return res.status(400).json({ success: false, message: 'Invalid user ID.' });
   }
 
+  // BOLA Check: Only the authenticated user themselves or an admin can access this history
+  if (req.user.id !== targetUserId && req.user.role !== 'admin') {
+    securityLogger.warn('BOLA violation blocked', {
+      callerId: req.user.id,
+      targetUserId,
+    });
+    return res.status(403).json({
+      success: false,
+      code: 'BOLA_FORBIDDEN',
+      message: 'Access denied. You cannot view order records belonging to another user.',
+    });
+  }
+
   try {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    // Match orders by customer phone or customer name
-    let orders = [];
-    if (user.phone) {
+    // Row Level Security: Fetch orders by user_id OR fallback to verified phone
+    let orders = db.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC').all(targetUserId);
+
+    if (orders.length === 0 && user.phone) {
       orders = db.prepare('SELECT * FROM orders WHERE customer_phone = ? ORDER BY id DESC').all(user.phone);
-    }
-    if (orders.length === 0 && user.name) {
-      orders = db.prepare('SELECT * FROM orders WHERE customer_name LIKE ? ORDER BY id DESC').all(`%${user.name}%`);
     }
 
     const itemsStmt = db.prepare('SELECT * FROM order_items WHERE order_id = ?');
@@ -221,11 +457,11 @@ app.get('/api/products', (req, res) => {
 
   if (category && category !== 'all') {
     sql += ` AND p.category_slug = ?`;
-    params.push(sanitizeString(category, 50));
+    params.push(sanitizeInput(category, 50));
   }
 
   if (search && search.trim() !== '') {
-    const cleanSearch = sanitizeString(search, 100);
+    const cleanSearch = sanitizeInput(search, 100);
     sql += ` AND (p.name LIKE ? OR p.description LIKE ? OR v.name LIKE ?)`;
     const searchPattern = `%${cleanSearch}%`;
     params.push(searchPattern, searchPattern, searchPattern);
@@ -239,22 +475,22 @@ app.get('/api/products', (req, res) => {
     }
   }
 
-  if (sort === 'price_asc') {
-    sql += ` ORDER BY p.price ASC`;
-  } else if (sort === 'price_desc') {
-    sql += ` ORDER BY p.price DESC`;
-  } else if (sort === 'rating') {
-    sql += ` ORDER BY p.rating DESC`;
-  } else {
-    sql += ` ORDER BY p.is_featured DESC, p.id DESC`;
-  }
+  // Strict sorting parameter validation to prevent SQLi
+  const validSorts = {
+    price_asc: 'p.price ASC',
+    price_desc: 'p.price DESC',
+    rating: 'p.rating DESC',
+    featured: 'p.is_featured DESC, p.id DESC',
+  };
+  const sortClause = validSorts[sort] || 'p.is_featured DESC, p.id DESC';
+  sql += ` ORDER BY ${sortClause}`;
 
   try {
     const stmt = db.prepare(sql);
     const products = stmt.all(...params);
     res.json({ success: true, count: products.length, products });
   } catch (err) {
-    console.error('Error fetching products:', err.message);
+    securityLogger.error('Error fetching products', { error: err.message });
     res.status(500).json({ success: false, error: 'Failed to retrieve products.' });
   }
 });
@@ -289,9 +525,9 @@ app.get('/api/products/:id', (req, res) => {
   }
 });
 
-app.post('/api/products', (req, res) => {
+// Server-side RBAC & SSRF Image Validation for Product Creation
+app.post('/api/products', authenticateToken, requireRole(['artisan', 'admin']), (req, res) => {
   const {
-    vendor_id = 1,
     category_slug = 'crafts',
     name,
     price,
@@ -303,21 +539,32 @@ app.post('/api/products', (req, res) => {
     badge = 'New Arrival',
   } = req.body;
 
-  const cleanName = sanitizeString(name, 150);
-  const cleanCategory = sanitizeString(category_slug, 50);
-  const cleanUnit = sanitizeString(unit, 30);
-  const cleanBadge = sanitizeString(badge, 40);
-  const cleanDesc = sanitizeString(description, 1000);
+  const cleanName = escapeHtml(sanitizeInput(name, 150));
+  const cleanCategory = sanitizeInput(category_slug, 50);
+  const cleanUnit = sanitizeInput(unit, 30);
+  const cleanBadge = sanitizeInput(badge, 40);
+  const cleanDesc = escapeHtml(sanitizeInput(description, 1000));
   const numPrice = Number.parseFloat(price);
   const numStock = Number.parseInt(stock, 10);
-  const numVendor = Number.parseInt(vendor_id, 10);
 
-  if (!cleanName || Number.isNaN(numPrice) || numPrice <= 0 || !image_url) {
+  // SSRF & File Upload Validation: Ensure image_url is a safe public URL
+  if (!image_url || !isSafePublicUrl(image_url)) {
     return res.status(400).json({
       success: false,
-      message: 'Valid product name, positive price, and image URL are required.',
+      code: 'SSRF_INVALID_IMAGE_URL',
+      message: 'Image URL must be a valid public HTTPS or HTTP web address. Local and private IP networks are blocked.',
     });
   }
+
+  if (!cleanName || Number.isNaN(numPrice) || numPrice <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid product name and positive price are required.',
+    });
+  }
+
+  // Row Level Security: Bind to authenticated artisan's vendor_id
+  const assignedVendorId = req.user.role === 'admin' ? (req.body.vendor_id || 1) : (req.user.vendor_id || 1);
 
   try {
     const stmt = db.prepare(`
@@ -325,33 +572,55 @@ app.post('/api/products', (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, 5.0, 1, ?, ?, ?, 1)
     `);
     const result = stmt.run(
-      numVendor || 1,
+      assignedVendorId,
       cleanCategory || 'crafts',
       cleanName,
       numPrice,
       original_price ? Number.parseFloat(original_price) : numPrice * 1.2,
       cleanUnit || 'piece',
       Number.isNaN(numStock) ? 10 : Math.max(0, numStock),
-      sanitizeString(image_url, 500),
+      image_url,
       cleanDesc,
       cleanBadge
     );
+
+    securityLogger.info('Product created by artisan', { vendorId: assignedVendorId, productName: cleanName });
     res.status(201).json({ success: true, id: result.lastInsertRowid, message: 'Product created successfully' });
   } catch (err) {
-    console.error('Error creating product:', err.message);
+    securityLogger.error('Error creating product', { error: err.message });
     res.status(500).json({ success: false, error: 'Failed to create product in database.' });
   }
 });
 
-app.delete('/api/products/:id', (req, res) => {
+// Row Level Security on Product Deletion: Artisan can only delete their OWN products
+app.delete('/api/products/:id', authenticateToken, requireRole(['artisan', 'admin']), (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   if (Number.isNaN(id) || id <= 0) {
     return res.status(400).json({ success: false, error: 'Invalid product ID.' });
   }
 
   try {
-    const stmt = db.prepare(`DELETE FROM products WHERE id = ?`);
-    stmt.run(id);
+    const product = db.prepare('SELECT id, vendor_id, name FROM products WHERE id = ?').get(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    // Ownership check: Artisan can only delete products belonging to their store
+    if (req.user.role !== 'admin' && req.user.vendor_id !== product.vendor_id) {
+      securityLogger.warn('RLS deletion violation blocked', {
+        userId: req.user.id,
+        userVendor: req.user.vendor_id,
+        productVendor: product.vendor_id,
+      });
+      return res.status(403).json({
+        success: false,
+        code: 'RLS_FORBIDDEN',
+        message: 'Permission denied. You can only delete creations belonging to your own artisan workshop.',
+      });
+    }
+
+    db.prepare('DELETE FROM products WHERE id = ?').run(id);
+    securityLogger.info('Product deleted', { productId: id, vendorId: product.vendor_id });
     res.json({ success: true, message: 'Product removed' });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Database operation failed.' });
@@ -375,15 +644,12 @@ app.get('/api/vendors/:id', (req, res) => {
   }
 
   try {
-    const vendorStmt = db.prepare('SELECT * FROM vendors WHERE id = ?');
-    const vendor = vendorStmt.get(id);
+    const vendor = db.prepare('SELECT * FROM vendors WHERE id = ?').get(id);
     if (!vendor) {
       return res.status(404).json({ success: false, message: 'Vendor not found.' });
     }
 
-    const prodStmt = db.prepare('SELECT * FROM products WHERE vendor_id = ? ORDER BY id DESC');
-    const products = prodStmt.all(id);
-
+    const products = db.prepare('SELECT * FROM products WHERE vendor_id = ? ORDER BY id DESC').all(id);
     res.json({ success: true, vendor, products });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Database query failed.' });
@@ -401,13 +667,13 @@ app.get('/api/categories', (req, res) => {
 });
 
 // --- ORDERS ---
-app.post('/api/orders', orderLimiter, (req, res) => {
+app.post('/api/orders', orderLimiter, optionalAuth, (req, res) => {
   const { customer_name, customer_phone, customer_address, payment_method, items, total_amount } = req.body;
 
-  const cleanName = sanitizeString(customer_name, 100);
-  const cleanPhone = sanitizeString(customer_phone, 30);
-  const cleanAddress = sanitizeString(customer_address, 300);
-  const cleanPayment = sanitizeString(payment_method, 60) || 'Sandbox UPI';
+  const cleanName = escapeHtml(sanitizeInput(customer_name, 100));
+  const cleanPhone = sanitizeInput(customer_phone, 30);
+  const cleanAddress = escapeHtml(sanitizeInput(customer_address, 300));
+  const cleanPayment = sanitizeInput(payment_method, 60) || 'Sandbox UPI';
   const numTotal = Number.parseFloat(total_amount);
 
   if (!cleanName || cleanName.length < 2) {
@@ -427,14 +693,14 @@ app.post('/api/orders', orderLimiter, (req, res) => {
   }
 
   const orderNumber = `LB-${Math.floor(1000 + Math.random() * 9000)}`;
+  const userId = req.user ? req.user.id : null;
 
   try {
     const insertOrder = db.prepare(`
-      INSERT INTO orders (order_number, customer_name, customer_phone, customer_address, payment_method, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'PLACED')
+      INSERT INTO orders (order_number, user_id, customer_name, customer_phone, customer_address, payment_method, total_amount, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'PLACED')
     `);
-    const orderRes = insertOrder.run(orderNumber, cleanName, cleanPhone, cleanAddress, cleanPayment, numTotal);
-
+    const orderRes = insertOrder.run(orderNumber, userId, cleanName, cleanPhone, cleanAddress, cleanPayment, numTotal);
     const orderId = orderRes.lastInsertRowid;
 
     const insertItem = db.prepare(`
@@ -444,14 +710,15 @@ app.post('/api/orders', orderLimiter, (req, res) => {
 
     for (const item of items) {
       const pId = Number.parseInt(item.id, 10) || 0;
-      const pName = sanitizeString(item.name, 150) || 'Artisan Product';
+      const pName = escapeHtml(sanitizeInput(item.name, 150)) || 'Artisan Product';
       const pPrice = Number.parseFloat(item.price) || 0;
       const pQty = Math.max(1, Number.parseInt(item.quantity, 10) || 1);
-      const pImg = sanitizeString(item.image_url, 500);
+      const pImg = item.image_url && isSafePublicUrl(item.image_url) ? item.image_url : '';
 
       insertItem.run(orderId, pId, pName, pPrice, pQty, pImg);
     }
 
+    securityLogger.info('Order placed successfully', { orderNumber, userId, total: numTotal });
     res.status(201).json({
       success: true,
       order: {
@@ -463,14 +730,25 @@ app.post('/api/orders', orderLimiter, (req, res) => {
       message: 'Order placed successfully!',
     });
   } catch (err) {
-    console.error('Order creation error:', err.message);
+    securityLogger.error('Order creation error', { error: err.message });
     res.status(500).json({ success: false, error: 'Database transaction failed.' });
   }
 });
 
-app.get('/api/orders', (req, res) => {
+// Admin / Artisan Order Management
+app.get('/api/orders', optionalAuth, (req, res) => {
   try {
-    const orders = db.prepare('SELECT * FROM orders ORDER BY id DESC').all();
+    // If authenticated customer, only return their own orders
+    let sql = 'SELECT * FROM orders';
+    const params = [];
+
+    if (req.user && req.user.role === 'customer') {
+      sql += ' WHERE user_id = ?';
+      params.push(req.user.id);
+    }
+    sql += ' ORDER BY id DESC LIMIT 50';
+
+    const orders = db.prepare(sql).all(...params);
     const itemsStmt = db.prepare('SELECT * FROM order_items WHERE order_id = ?');
 
     const ordersWithItems = orders.map((o) => {
@@ -484,12 +762,13 @@ app.get('/api/orders', (req, res) => {
   }
 });
 
-app.patch('/api/orders/:id/status', (req, res) => {
+// Server-side RBAC on Status Updates: Only Artisans and Admins can update fulfillment
+app.patch('/api/orders/:id/status', authenticateToken, requireRole(['artisan', 'admin']), (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
   const { status } = req.body;
 
   const validStatuses = ['PLACED', 'CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
-  const cleanStatus = sanitizeString(status, 20).toUpperCase();
+  const cleanStatus = sanitizeInput(status, 20).toUpperCase();
 
   if (!cleanStatus || !validStatuses.includes(cleanStatus)) {
     return res.status(400).json({
@@ -501,6 +780,7 @@ app.patch('/api/orders/:id/status', (req, res) => {
   try {
     const stmt = db.prepare('UPDATE orders SET status = ? WHERE id = ?');
     stmt.run(cleanStatus, id);
+    securityLogger.info('Order status updated', { orderId: id, status: cleanStatus, updatedBy: req.user.id });
     res.json({ success: true, message: `Order marked as ${cleanStatus}` });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Database update failed.' });
@@ -518,12 +798,12 @@ app.get('/api/products/:id/reviews', (req, res) => {
   }
 });
 
-app.post('/api/reviews', (req, res) => {
+app.post('/api/reviews', reviewLimiter, (req, res) => {
   const { product_id, customer_name, rating, comment } = req.body;
   const pId = Number.parseInt(product_id, 10);
-  const cleanName = sanitizeString(customer_name, 100);
+  const cleanName = escapeHtml(customer_name, 100);
   const numRating = Math.max(1, Math.min(5, Number.parseInt(rating, 10) || 5));
-  const cleanComment = sanitizeString(comment, 500);
+  const cleanComment = escapeHtml(comment, 500);
 
   if (!pId || !cleanName || !cleanComment) {
     return res.status(400).json({ success: false, message: 'Product ID, customer name, and comment are required.' });
@@ -533,7 +813,6 @@ app.post('/api/reviews', (req, res) => {
     const insertRev = db.prepare('INSERT INTO reviews (product_id, customer_name, rating, comment) VALUES (?, ?, ?, ?)');
     insertRev.run(pId, cleanName, numRating, cleanComment);
 
-    // Recalculate average rating for product
     const avgData = db.prepare('SELECT AVG(rating) as avg_rating, COUNT(*) as rev_count FROM reviews WHERE product_id = ?').get(pId);
     if (avgData) {
       const updateProd = db.prepare('UPDATE products SET rating = ?, reviews_count = ? WHERE id = ?');
@@ -568,8 +847,31 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
-// --- AI ASSISTANT PROXY (Dual Resilience: FastAPI + In-Process Fallback) ---
-app.post('/api/ai/chat', async (req, res) => {
+// --- WEBHOOK ENDPOINT WITH HMAC SIGNATURE VERIFICATION ---
+app.post('/api/webhooks/payment', (req, res) => {
+  const signature = req.headers['x-webhook-signature'];
+  if (!signature) {
+    return res.status(401).json({ success: false, message: 'Missing x-webhook-signature header.' });
+  }
+
+  const isValid = verifyWebhookSignature(req.body, signature, WEBHOOK_SECRET);
+  if (!isValid) {
+    securityLogger.warn('Invalid webhook signature attempt');
+    return res.status(401).json({ success: false, message: 'Cryptographic signature verification failed.' });
+  }
+
+  const { event, order_number } = req.body;
+  if (event === 'payment.captured' && order_number) {
+    db.prepare("UPDATE orders SET status = 'CONFIRMED' WHERE order_number = ?").run(order_number);
+    securityLogger.info('Payment webhook verified and processed', { order_number });
+    return res.json({ success: true, message: 'Webhook signature verified. Order confirmed.' });
+  }
+
+  res.json({ success: true, message: 'Webhook received.' });
+});
+
+// --- AI ASSISTANT PROXY (Rate Limited & Protected) ---
+app.post('/api/ai/chat', aiLimiter, async (req, res) => {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
@@ -587,11 +889,11 @@ app.post('/api/ai/chat', async (req, res) => {
       return res.json(data);
     }
   } catch (err) {
-    console.log('AI microservice port 8000 fallback triggered:', err.message);
+    securityLogger.warn('AI microservice fallback triggered', { error: err.message });
   }
 
-  // Resilient In-Process Fallback: Directly handle key user intents without downtime
-  const msg = sanitizeString(req.body?.message || '', 200).toLowerCase();
+  // Resilient In-Process Fallback
+  const msg = sanitizeInput(req.body?.message || '', 200).toLowerCase();
 
   if (msg.includes('sales') || msg.includes('revenue') || msg.includes('analytics')) {
     const totalOrders = db.prepare('SELECT count(*) as count FROM orders').get().count;
@@ -638,10 +940,10 @@ app.use((req, res, next) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err.message);
+  securityLogger.error('Unhandled server error', { error: err.message });
   res.status(500).json({ success: false, error: 'Internal server error.' });
 });
 
 app.listen(PORT, () => {
-  console.log(`LocalBiz Backend running on http://localhost:${PORT}`);
+  console.log(`LocalBiz Hardened Backend running on http://localhost:${PORT}`);
 });

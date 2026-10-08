@@ -1,0 +1,21 @@
+security checklist:
+sql injection
+block cross-sire scripting
+add csrf protection
+validate file upload
+fix broken object level authorization
+add rate limitng
+secyure jwt secrets
+keep api server side
+hash password securely
+add multi factor acuth
+tighten cors settigns
+remove auth token from local storage
+enforce permission server side
+enable row level security
+verify we hook sign
+check for ssrf
+remove exposed source maps
+change default credentials
+keep sensitive data out of logs
+update vulnerable dependencies
